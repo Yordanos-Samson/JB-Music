@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter_gemini/flutter_gemini.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:jb_music_recommendation_ai/random_circles.dart';
 import 'dart:convert';
-import 'package:url_launcher/url_launcher.dart';
+
 
 class PromptScreen extends StatefulWidget {
   final VoidCallback showHomeScreen;
@@ -61,81 +63,61 @@ class _PromptScreenState extends State<PromptScreen> {
 
   // Function to submit mood and genres and fetch playlist
   Future<void> _submitSelections() async {
+    // Input validation
     if (_selectedMood == null || _selectedGenres.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please select a mood and at least one genre'),
-        ),
+        const SnackBar(content: Text('Please select a mood and at least one genre')),
       );
       return;
     }
 
-    setState(() {
-      _isLoading = true;
-    });
+    setState(() => _isLoading = true);
 
-    // Construct the prompt text using the selected mood and genres
-    final promptText = 'I want just a listed music playlist for'
-        'Mood: $_selectedMood, Genres: ${_selectedGenres.join(', ')}'
-        'in the format artist, title';
-
-    // API call to get playlist recommendations
-    final response = await http.post(
-      Uri.parse('https://api.openai.com/v1/chat/completions'),
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ${dotenv.env['token']}',
-      },
-      body: jsonEncode(
-        {
-          "model": "gpt-3.5-turbo-0125",
-          "messages": [
-            {"role": "system", "content": promptText},
+    try {
+      // Create chat with Gemini
+      final chat = Gemini.instance.chat([
+        Content(
+          parts: [
+            Part.text('Generate a music playlist with songs matching:'),
+            Part.text('Mood: $_selectedMood'),
+            Part.text('Genres: ${_selectedGenres.join(', ')}'),
+            Part.text('Format: artist - song title'),
           ],
-          'max_tokens': 250,
-          'temperature': 0,
-          "top_p": 1,
-        },
-      ),
-    );
+          role: 'user',
+        ),
+      ]);
 
-    // Print
-    print(response.body);
-
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      final choices = data['choices'] as List;
-      final playlistString =
-      choices.isNotEmpty ? choices[0]['message']['content'] as String : '';
+      final result = await chat;
+      if (result?.output?.isEmpty ?? true) {
+        throw Exception('No playlist generated');
+      }
 
       setState(() {
-        // Split the playlist string by newline and then split each song by " - "
-        _playlist = playlistString.split('\n').map((song) {
+        _playlist = (result?.output ?? '').split('\n').map((song) {
           final parts = song.split(' - ');
           if (parts.length >= 2) {
             return {'artist': parts[0].trim(), 'title': parts[1].trim()};
-          } else {
-            // Handle the case where song format is not as expected
-            return {'artist': 'Unknown Artist', 'title': 'Unknown Title'};
           }
+          return {'artist': 'Unknown Artist', 'title': song.trim()};
         }).toList();
+
         _isLoading = false;
       });
-    } else {
-      setState(() {
-        _isLoading = false;
-      });
+    } catch (e) {
+      setState(() => _isLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to fetch playlist')),
+        SnackBar(content: Text('Error: ${e.toString()}')),
       );
     }
   }
-
   Future<void> _openSpotify() async {
     final playlistQuery = _playlist
         .map((song) => '${song['artist']} - ${song['title']}')
         .join(', ');
-    final url = Uri.parse('https://open.spotify.com/search/$playlistQuery');
+
+    final encodedQuery = Uri.encodeComponent(playlistQuery);
+    final url = Uri.parse('https://open.spotify.com/search/$encodedQuery');
+
     if (await canLaunchUrl(url)) {
       await launchUrl(url, mode: LaunchMode.externalApplication);
     } else {
@@ -147,7 +129,10 @@ class _PromptScreenState extends State<PromptScreen> {
     final playlistQuery = _playlist
         .map((song) => '${song['artist']} - ${song['title']}')
         .join(', ');
-    final url = Uri.parse('https://audiomack.com/search/$playlistQuery');
+
+    final encodedQuery = Uri.encodeComponent(playlistQuery);
+    final url = Uri.parse('https://audiomack.com/search/$encodedQuery');
+
     if (await canLaunchUrl(url)) {
       await launchUrl(url, mode: LaunchMode.externalApplication);
     } else {
